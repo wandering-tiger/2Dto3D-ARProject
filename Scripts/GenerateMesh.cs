@@ -22,6 +22,8 @@ using UnityEngine.Networking;
 using System.Text;
 //using Autodesk.Fbx;
 using System.IO;
+using TensorFlow;
+using OpenCvSharp;
 
 //using UnityEngine.AI;
 
@@ -522,26 +524,88 @@ public class GenerateMesh : MonoBehaviour
         return mesh;
     }
 
-    //图像转为灰度图
-    Mat pic2dept(Mat inputMat)
-    {
-        Mat outputMat;
-        int w = inputMat.cols();
-        int h = inputMat.rows();
-        Imgproc.resize(inputMat, inputMat, new Size(400, 400 * h / w));
-        Imgcodecs.imwrite("D:\\Unity\\MeshPhoto\\inputMap.jpg", inputMat);
-        Imgproc.cvtColor(inputMat, inputMat, Imgproc.COLOR_BGR2GRAY);
-        inputMat = ~inputMat;
-        Imgproc.threshold(inputMat, inputMat, 20, 300, Imgproc.THRESH_BINARY);
-        outputMat = new Mat(new Size(h, w), CvType.CV_32FC1);
-        Imgproc.distanceTransform(inputMat, outputMat, Imgproc.DIST_L2, 3);
-        // 标准化
-        Core.normalize(outputMat, outputMat, 0, 255, Core.NORM_MINMAX);
-        Imgcodecs.imwrite("D:\\Unity\\MeshPhoto\\GrayscaleMap.jpg", outputMat);
-        Imgproc.resize(outputMat, outputMat, new Size(400, 400 * h / w));
-        return (outputMat);
+    // //图像转为灰度图
+    // Mat pic2dept(Mat inputMat)
+    // {
+    //     Mat outputMat;
+    //     int w = inputMat.cols();
+    //     int h = inputMat.rows();
+    //     Imgproc.resize(inputMat, inputMat, new Size(400, 400 * h / w));
+    //     Imgcodecs.imwrite("D:\\Unity\\MeshPhoto\\inputMap.jpg", inputMat);
+    //     Imgproc.cvtColor(inputMat, inputMat, Imgproc.COLOR_BGR2GRAY);
+    //     inputMat = ~inputMat;
+    //     Imgproc.threshold(inputMat, inputMat, 20, 300, Imgproc.THRESH_BINARY);
+    //     outputMat = new Mat(new Size(h, w), CvType.CV_32FC1);
+    //     Imgproc.distanceTransform(inputMat, outputMat, Imgproc.DIST_L2, 3);
+    //     // 标准化
+    //     Core.normalize(outputMat, outputMat, 0, 255, Core.NORM_MINMAX);
+    //     Imgcodecs.imwrite("D:\\Unity\\MeshPhoto\\GrayscaleMap.jpg", outputMat);
+    //     Imgproc.resize(outputMat, outputMat, new Size(400, 400 * h / w));
+    //     return (outputMat);
 
+    // }
+
+    Mat pic2dept(Mat inputMat)
+{
+    // 第一步：对输入图像进行预处理（如大小调整）
+    int w = inputMat.Cols;
+    int h = inputMat.Rows;
+    Cv2.Resize(inputMat, inputMat, new Size(400, 400 * h / w));
+
+    // 将图像转换为深度学习模型可以接受的格式
+    Mat preprocessedImage = PrepareForModel(inputMat);
+
+    // 加载预训练模型
+    var graph = new TFGraph();
+    var model = File.ReadAllBytes("path_to_model.pb");
+    graph.Import(model);
+
+    using (var session = new TFSession(graph))
+    {
+        // 创建输入张量
+        var tensor = CreateTensorFromImage(preprocessedImage);
+        var runner = session.GetRunner();
+        runner.AddInput(graph["input"][0], tensor).Fetch(graph["output"][0]);
+        
+        // 执行模型推理
+        var output = runner.Run();
+        var outputTensor = output[0];
+
+        // 将输出张量转换为图像
+        Mat depthMap = ConvertTensorToMat(outputTensor, h, w);
+
+        // 可选：保存深度图
+        Cv2.ImWrite("D:\\Unity\\MeshPhoto\\DepthMap.jpg", depthMap);
+
+        // 返回深度图
+        return depthMap;
     }
+}
+
+Mat PrepareForModel(Mat inputMat)
+{
+    // 对图像进行归一化、通道变换等操作
+    Cv2.CvtColor(inputMat, inputMat, ColorConversionCodes.BGR2RGB);
+    inputMat.ConvertTo(inputMat, MatType.CV_32FC3, 1.0 / 255);
+    return inputMat;
+}
+
+TFTensor CreateTensorFromImage(Mat image)
+{
+    // 将图像转换为 TensorFlow 使用的张量
+    var shape = new TFShape(1, image.Rows, image.Cols, 3);
+    return TFTensor.FromBuffer(shape, image.Data, 0, image.Rows * image.Cols * 3);
+}
+
+Mat ConvertTensorToMat(TFTensor tensor, int height, int width)
+{
+    // 将 TensorFlow 的输出张量转换为 OpenCV Mat
+    var data = tensor.Data<float>();
+    Mat mat = new Mat(height, width, MatType.CV_32FC1, data);
+    Core.Normalize(mat, mat, 0, 255, NormTypes.MinMax);
+    mat.ConvertTo(mat, MatType.CV_8UC1);
+    return mat;
+}
 
     //转化mat为texture
     public Texture2D ConvertMatToTexture(Mat mat)
